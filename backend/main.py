@@ -1,5 +1,15 @@
 from typing import Union, List
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    UploadFile,
+    File,
+    Form,
+    Body,
+    Depends,
+    Header,
+)
+from jose import JWTError, jwt
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -8,10 +18,43 @@ import sqlite3
 import os
 from pathlib import Path
 from datetime import datetime, timezone
+from auth import router as auth_router
+from config import SECRET_KEY, ALGORITHM
 
 app = FastAPI()
+app.include_router(auth_router)
 
 DATABASE_URL = "database.db"
+
+MAX_TITLE_LEN = 500
+MAX_LOCATION_LEN = 500
+MAX_DESCRIPTION_LEN = 3000
+
+
+class CurrentUser(BaseModel):
+    id: str
+    email: str | None = None
+    name: str | None = None
+
+
+async def get_current_user(authorization: str = Header(None)) -> CurrentUser:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid auth header")
+    token = authorization.split(" ", 1)[1]
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str | None = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=401, detail="Invalid token payload")
+
+        return CurrentUser(
+            id=user_id,
+            email=payload.get("email"),
+            name=payload.get("name"),
+        )
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 def utc_now_iso() -> str:
@@ -55,16 +98,16 @@ init_db()
 origins = [
     "http://localhost:8081",
     "http://127.0.0.1:8081",
-    "http://localhost:8080",  # Add Expo dev server
-    "*",
+    "http://localhost:8080",
+    "https://cacpc.dev",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 UPLOAD_DIR = "uploads"
@@ -95,6 +138,14 @@ class ItemResponse(BaseModel):
     user_name: str | None = None
 
 
+def validate_text_field(name: str, value: str, max_len: int):
+    if not value or not value.strip():
+        raise HTTPException(status_code=400, detail=f"{name} is required")
+    if len(value) > max_len:
+        raise HTTPException(status_code=400, detail=f"{name} too long")
+    return value
+
+
 def save_uploaded_file(file: UploadFile) -> str:
     """Save uploaded file and return the filename"""
     # Generate unique filename
@@ -116,13 +167,18 @@ async def add_lost_item(
     title: str = Form(...),
     location: str = Form(...),
     description: str = Form(...),
-    user_id: str = Form(...),
-    user_name: str = Form(...),
-    user_email: str = Form(...),
     image: UploadFile = File(None),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     return await add_item_to_db(
-        "lost", title, location, description, user_id, user_name, user_email, image
+        "lost",
+        title,
+        location,
+        description,
+        current_user.id,
+        current_user.name or "",
+        current_user.email or "",
+        image,
     )
 
 
@@ -131,13 +187,18 @@ async def add_found_item(
     title: str = Form(...),
     location: str = Form(...),
     description: str = Form(...),
-    user_id: str = Form(...),
-    user_name: str = Form(...),
-    user_email: str = Form(...),
     image: UploadFile = File(None),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     return await add_item_to_db(
-        "found", title, location, description, user_id, user_name, user_email, image
+        "found",
+        title,
+        location,
+        description,
+        current_user.id,
+        current_user.name or "",
+        current_user.email or "",
+        image,
     )
 
 
@@ -166,6 +227,10 @@ async def add_item_to_db(
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
+
+    title = validate_text_field("Title", title, MAX_TITLE_LEN)
+    location = validate_text_field("Location", location, MAX_LOCATION_LEN)
+    description = validate_text_field("Description", description, MAX_DESCRIPTION_LEN)
 
     try:
         image_filename = None
@@ -265,7 +330,7 @@ def get_item(item_id: int):
 @app.post("/mark_resolved/{item_id}")
 def mark_resolved(
     item_id: int,
-    user_id: str = Body(..., embed=True),
+    current_user: CurrentUser = Depends(get_current_user),
 ):
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -273,11 +338,9 @@ def mark_resolved(
         item = cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
 
         if not item:
-            conn.close()
             raise HTTPException(status_code=404, detail="Item not found")
 
-        if item["user_id"] != user_id:
-            conn.close()
+        if item["user_id"] != current_user.id:
             raise HTTPException(status_code=403, detail="Not allowed")
 
         cursor.execute(
@@ -290,8 +353,13 @@ def mark_resolved(
             (utc_now_iso(), item_id),
         )
         conn.commit()
-        conn.close()
         return {"status": "ok"}
     except Exception as e:
-        conn.close()
         raise HTTPException(status_code=500, detail=f"Error marking resolved: {str(e)}")
+    finally:
+        conn.close()
+
+
+@app.get("/me")
+def read_me(current_user: CurrentUser = Depends(get_current_user)):
+    return current_user

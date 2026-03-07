@@ -20,6 +20,7 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedTextInput } from "@/components/themed-text-input";
 import { ThemedView } from "@/components/themed-view";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { authFetch } from "@/utils/authFetch";
 import { MenuView } from "@react-native-menu/menu";
 
 import * as ImagePicker from "expo-image-picker";
@@ -590,15 +591,12 @@ export default function TabTwoScreen() {
     }
 
     setIsSubmitting(true);
-
     setModalVisible(false);
     await new Promise(requestAnimationFrame);
 
     try {
-      const storedUser = await AsyncStorage.getItem("google_user_info");
-      const user = storedUser ? JSON.parse(storedUser) : null;
-
-      if (!user?.id) {
+      const sessionToken = await AsyncStorage.getItem("session_token");
+      if (!sessionToken) {
         showAlert("Error", "You must be signed in to add an item.");
         setIsSubmitting(false);
         return;
@@ -608,9 +606,6 @@ export default function TabTwoScreen() {
       formDataToSend.append("title", formData.title);
       formDataToSend.append("description", formData.description);
       formDataToSend.append("location", formData.location);
-      formDataToSend.append("user_id", user.id);
-      formDataToSend.append("user_name", user.name);
-      formDataToSend.append("user_email", user.email);
 
       if (Platform.OS === "web" && selectedImageFile) {
         formDataToSend.append("image", selectedImageFile);
@@ -627,19 +622,25 @@ export default function TabTwoScreen() {
       }
 
       const endpoint =
-        modalType === "lost" ? "add_lost_item" : "add_found_item";
+        modalType === "lost" ? "/add_lost_item" : "/add_found_item";
 
-      const response = await fetch(`${SERVER_URL}/${endpoint}`, {
+      const res = await authFetch(endpoint, {
         method: "POST",
         body: formDataToSend,
       });
 
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(text);
+      if (!res) {
+        return;
       }
 
-      const addedItem = await response.json();
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        const backendMessage = body?.detail || "Failed to add item";
+        showAlert("Error", backendMessage);
+        return;
+      }
+
+      const addedItem = await res.json();
       setItems((prev) => [addedItem, ...prev]);
 
       showAlert(
@@ -647,6 +648,7 @@ export default function TabTwoScreen() {
         `Added ${modalType === "lost" ? "lost" : "found"} item!`,
       );
     } catch (err: any) {
+      console.error("Error adding item:", err);
       showAlert("Error", err.message || "Failed to add item");
     } finally {
       setIsSubmitting(false);

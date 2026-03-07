@@ -16,6 +16,8 @@ import { ThemedText } from "@/components/themed-text";
 import { ThemedView } from "@/components/themed-view";
 import { useColorScheme } from "react-native";
 
+import { SERVER_URL } from "@/config";
+
 WebBrowser.maybeCompleteAuthSession();
 
 if (Platform.OS !== "web" && GoogleSignin) {
@@ -30,7 +32,6 @@ if (Platform.OS !== "web" && GoogleSignin) {
 
 // Storage keys
 const USER_STORAGE_KEY = "google_user_info";
-const TOKEN_STORAGE_KEY = "google_auth_token";
 
 export default function LoginScreen() {
   const scheme = useColorScheme();
@@ -41,20 +42,16 @@ export default function LoginScreen() {
   // Web authentication
   const [request, response, promptAsync] =
     Platform.OS === "web"
-      ? Google.useAuthRequest({
-          webClientId:
+      ? Google.useIdTokenAuthRequest({
+          clientId:
             "131708705239-02b01cemnlljld61bp6vgmmstf7c96ov.apps.googleusercontent.com",
-          scopes: ["profile", "email"],
         })
       : [null, null, null];
 
   // ===== PERSISTENCE FUNCTIONS =====
-  const storeUserInfo = async (userData, token = null) => {
+  const storeUserInfo = async (userData) => {
     try {
       await AsyncStorage.setItem(USER_STORAGE_KEY, JSON.stringify(userData));
-      if (token) {
-        await AsyncStorage.setItem(TOKEN_STORAGE_KEY, token);
-      }
     } catch (error) {
       console.error("Error storing user info:", error);
     }
@@ -73,7 +70,7 @@ export default function LoginScreen() {
   const clearUserInfo = async () => {
     try {
       await AsyncStorage.removeItem(USER_STORAGE_KEY);
-      await AsyncStorage.removeItem(TOKEN_STORAGE_KEY);
+      await AsyncStorage.removeItem("session_token");
     } catch (error) {
       console.error("Error clearing user info:", error);
     }
@@ -84,19 +81,27 @@ export default function LoginScreen() {
     const checkExistingSession = async () => {
       try {
         const storedUser = await getUserInfo();
-        if (storedUser) {
-          setUserInfo(storedUser);
+        const storedSessionToken = await AsyncStorage.getItem("session_token");
 
-          if (Platform.OS !== "web" && GoogleSignin) {
-            try {
-              const storedUser = await getUserInfo();
-              if (storedUser) {
-                setUserInfo(storedUser);
-              }
-            } catch (error) {
-              console.log("Token validation error:", error);
-            }
-          }
+        if (!storedUser || !storedSessionToken) {
+          return;
+        }
+
+        // Verify with backend
+        const res = await fetch(`${SERVER_URL}/me`, {
+          headers: {
+            Authorization: `Bearer ${storedSessionToken}`,
+          },
+        });
+
+        if (res.status === 200) {
+          // Token still valid; keep user logged in
+          setUserInfo(storedUser);
+        } else if (res.status === 401) {
+          // Backend says session is invalid
+          await clearUserInfo();
+        } else {
+          console.warn("Unexpected /me status:", res.status);
         }
       } catch (error) {
         console.error("Session check error:", error);
@@ -113,44 +118,41 @@ export default function LoginScreen() {
   useEffect(() => {
     const handleWebAuth = async () => {
       if (Platform.OS === "web" && response?.type === "success") {
-        const { accessToken } = response.authentication;
-        await fetchUserInfoWeb(accessToken);
+        const idToken = (response as any).params?.id_token;
+
+        if (!idToken) {
+          console.error("No id_token in Google web auth response:", response);
+          return;
+        }
+
+        setLoading(true);
+        try {
+          const backendResponse = await fetch(`${SERVER_URL}/auth/google`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id_token: idToken }),
+          });
+
+          if (!backendResponse.ok) {
+            const text = await backendResponse.text();
+            throw new Error(text || "Failed to authenticate with backend");
+          }
+
+          const { session_token, user } = await backendResponse.json();
+
+          await AsyncStorage.setItem("session_token", session_token);
+          await storeUserInfo(user);
+          setUserInfo(user);
+        } catch (error) {
+          console.error("Web login error:", error);
+        } finally {
+          setLoading(false);
+        }
       }
     };
+
     handleWebAuth();
   }, [response]);
-
-  // Fetch user info for web authentication
-  const fetchUserInfoWeb = async (accessToken) => {
-    setLoading(true);
-    try {
-      const response = await fetch(
-        "https://www.googleapis.com/oauth2/v3/userinfo",
-        {
-          headers: { Authorization: `Bearer ${accessToken}` },
-        },
-      );
-      const user = await response.json();
-      const hiResPhoto = user.picture
-        ? user.picture.replace(/=s\d+-c/, "=s512-c")
-        : null;
-
-      const userData = {
-        id: user.sub,
-        name: user.name,
-        email: user.email,
-        photo: hiResPhoto,
-      };
-
-      setUserInfo(userData);
-
-      await storeUserInfo(userData, accessToken);
-    } catch (error) {
-      console.error("Error fetching user info:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
 
   // Native login
   const nativeLogin = async () => {
@@ -162,21 +164,33 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await GoogleSignin.hasPlayServices();
-      const user = await GoogleSignin.signIn();
-      const hiResPhoto = user.data.user.photo
-        ? user.data.user.photo.replace(/=s\d+-c/, "=s512-c")
-        : null;
+      const response = await GoogleSignin.signIn();
 
-      const userData = {
-        id: user.data.user.id,
-        name: user.data.user.name,
-        email: user.data.user.email,
-        photo: hiResPhoto,
-      };
+      const idToken = response?.data?.idToken;
 
-      setUserInfo(userData);
+      if (!idToken) {
+        throw new Error("No ID token returned from Google Sign-In");
+      }
+      // Send ID token to backend to verify and get our own session token
+      const backendResponse = await fetch(`${SERVER_URL}/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id_token: idToken }),
+      });
 
-      await storeUserInfo(userData);
+      if (!backendResponse.ok) {
+        const text = await backendResponse.text();
+        throw new Error(text || "Failed to authenticate with backend");
+      }
+
+      const { session_token, user } = await backendResponse.json();
+
+      // Store backend session token separately
+      await AsyncStorage.setItem("session_token", session_token);
+
+      // Also store user info for UI purposes
+      await storeUserInfo(user);
+      setUserInfo(user);
     } catch (error) {
       console.error("Native login error:", error);
     } finally {

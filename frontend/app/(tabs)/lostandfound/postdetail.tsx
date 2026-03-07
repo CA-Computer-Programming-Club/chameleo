@@ -10,6 +10,7 @@ import { useRouter } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as MailComposer from "expo-mail-composer";
 import showAlert from "@/components/alert";
+import { authFetch } from "@/utils/authFetch";
 
 interface Post {
   id: string | number;
@@ -74,33 +75,24 @@ export default function PostDetailScreen() {
     }
   };
 
-  const markResolved = (id: string | number) => {
-    if (!currentUserId) {
-      console.warn("No current user; cannot mark resolved");
+  const markResolved = async (id: string | number) => {
+    const res = await authFetch(`/mark_resolved/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    if (!res) {
+      // 401 or network error already handled by authFetch
       return;
     }
 
-    fetch(`${SERVER_URL}/mark_resolved/${id}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ user_id: currentUserId }),
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(
-            `Failed to mark post as resolved: ${response.status}`,
-          );
-        }
-        return response.json();
-      })
-      .then(() => {
-        router.back();
-      })
-      .catch((error) => {
-        console.error("Error marking post as resolved:", error);
-      });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const msg = body?.detail || "Failed to mark post as resolved.";
+      showAlert("Error", msg);
+      return;
+    }
   };
 
   const confirmMarkResolved = () => {
