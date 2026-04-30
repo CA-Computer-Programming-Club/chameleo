@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timezone
 from auth import router as auth_router
-from config import SECRET_KEY, ALGORITHM
+from config import SECRET_KEY, ALGORITHM, get_admin_emails
 
 app = FastAPI()
 app.include_router(auth_router)
@@ -35,6 +35,7 @@ class CurrentUser(BaseModel):
     id: str
     email: str | None = None
     name: str | None = None
+    is_admin: bool = False
 
 
 async def get_current_user(authorization: str = Header(None)) -> CurrentUser:
@@ -48,10 +49,14 @@ async def get_current_user(authorization: str = Header(None)) -> CurrentUser:
         if user_id is None:
             raise HTTPException(status_code=401, detail="Invalid token payload")
 
+        user_email = payload.get("email", "") or ""
+        admin_emails = get_admin_emails()
+
         return CurrentUser(
             id=user_id,
-            email=payload.get("email"),
+            email=user_email,
             name=payload.get("name"),
+            is_admin=user_email.lower() in admin_emails,
         )
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -106,7 +111,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
 )
 
@@ -272,9 +277,9 @@ async def add_item_to_db(
         conn.close()
 
         return dict(created_item)
-    except Exception as e:
+    except Exception:
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Error adding item: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/get_lost_items")
@@ -295,9 +300,9 @@ def get_items_by_type(item_type: str):
         ).fetchall()
         conn.close()
         return [dict(item) for item in items]
-    except Exception as e:
+    except Exception:
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Error fetching items: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/get_all_items")
@@ -307,9 +312,9 @@ def get_all_items():
         items = conn.execute("SELECT * FROM items ORDER BY created_at DESC").fetchall()
         conn.close()
         return [dict(item) for item in items]
-    except Exception as e:
+    except Exception:
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Error fetching items: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.get("/get_item/{item_id}")
@@ -322,9 +327,12 @@ def get_item(item_id: int):
             return dict(item)
         else:
             raise HTTPException(status_code=404, detail="Item not found")
-    except Exception as e:
+    except HTTPException:
         conn.close()
-        raise HTTPException(status_code=500, detail=f"Error fetching item: {str(e)}")
+        raise
+    except Exception:
+        conn.close()
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @app.post("/mark_resolved/{item_id}")
@@ -340,7 +348,7 @@ def mark_resolved(
         if not item:
             raise HTTPException(status_code=404, detail="Item not found")
 
-        if item["user_id"] != current_user.id:
+        if item["user_id"] != current_user.id and not current_user.is_admin:
             raise HTTPException(status_code=403, detail="Not allowed")
 
         cursor.execute(
@@ -354,8 +362,38 @@ def mark_resolved(
         )
         conn.commit()
         return {"status": "ok"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error marking resolved: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        conn.close()
+
+
+@app.delete("/delete_item/{item_id}")
+def delete_item(
+    item_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+):
+    """Delete an item. Only admins can delete any item; regular users can only delete their own."""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    try:
+        item = cursor.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
+
+        if not item:
+            raise HTTPException(status_code=404, detail="Item not found")
+
+        if item["user_id"] != current_user.id and not current_user.is_admin:
+            raise HTTPException(status_code=403, detail="Not allowed")
+
+        cursor.execute("DELETE FROM items WHERE id = ?", (item_id,))
+        conn.commit()
+        return {"status": "ok", "deleted_id": item_id}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Internal server error")
     finally:
         conn.close()
 

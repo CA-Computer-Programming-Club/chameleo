@@ -35,6 +35,7 @@ export default function PostDetailScreen() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     fetchPostDetail();
@@ -46,6 +47,28 @@ export default function PostDetailScreen() {
       const stored = await AsyncStorage.getItem("google_user_info");
       const user = stored ? JSON.parse(stored) : null;
       setCurrentUserId(user?.id ?? null);
+
+      // Check stored admin status first (set during login)
+      if (user?.is_admin) {
+        setIsAdmin(true);
+        return;
+      }
+
+      // Fallback: fetch /me to get admin status from the server
+      try {
+        const token = await AsyncStorage.getItem("session_token");
+        if (token) {
+          const res = await fetch(`${SERVER_URL}/me`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setIsAdmin(data.is_admin ?? false);
+          }
+        }
+      } catch (err) {
+        console.error("Error fetching admin status:", err);
+      }
     };
     loadUser();
   }, []);
@@ -93,6 +116,33 @@ export default function PostDetailScreen() {
       showAlert("Error", msg);
       return;
     }
+
+    // Re-fetch post detail to reflect resolved status
+    fetchPostDetail();
+  };
+
+  const deletePost = async (id: string | number) => {
+    const res = await authFetch(`/delete_item/${id}`, {
+      method: "DELETE",
+    });
+
+    if (!res) {
+      return;
+    }
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      const msg = body?.detail || "Failed to delete post.";
+      showAlert("Error", msg);
+      return;
+    }
+
+    showAlert("Deleted", "The post has been deleted.", [
+      {
+        text: "OK",
+        onPress: () => router.back(),
+      },
+    ]);
   };
 
   const confirmMarkResolved = () => {
@@ -107,6 +157,23 @@ export default function PostDetailScreen() {
           text: "Confirm",
           style: "destructive",
           onPress: () => markResolved(postData.id),
+        },
+      ],
+    );
+  };
+
+  const confirmDelete = () => {
+    if (!postData) return;
+
+    showAlert(
+      "Delete Post",
+      "Are you sure you want to delete this post? This cannot be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => deletePost(postData.id),
         },
       ],
     );
@@ -260,7 +327,7 @@ export default function PostDetailScreen() {
 
       <View style={[styles.metaContainer]}>
         <View style={styles.buttonContainer}>
-          {isOwner ? (
+          {isOwner || (isAdmin && !postData.is_resolved) ? (
             <Pressable
               onPress={confirmMarkResolved}
               style={[
@@ -306,6 +373,33 @@ export default function PostDetailScreen() {
                 ]}
               >
                 Contact Poster
+              </ThemedText>
+            </Pressable>
+          )}
+
+          {isAdmin && (
+            <Pressable
+              onPress={confirmDelete}
+              style={[
+                styles.actionButton,
+                {
+                  backgroundColor:
+                    colorScheme === "dark"
+                      ? "rgba(220, 53, 69, 0.18)"
+                      : "rgba(220, 53, 69, 0.25)",
+                  marginTop: 16,
+                },
+              ]}
+            >
+              <ThemedText
+                style={[
+                  styles.buttonText,
+                  {
+                    color: colorScheme === "dark" ? "#f08080" : "#dc3545",
+                  },
+                ]}
+              >
+                Delete Post
               </ThemedText>
             </Pressable>
           )}

@@ -13,3 +13,11 @@ if not SECRET_KEY:
     )
 
 ALGORITHM = "HS256"
+
+
+def get_admin_emails() -> set[str]:
+    """Parse admin emails from environment variable. Comma-separated list."""
+    raw = os.environ.get("ADMIN_EMAILS", "")
+    if not raw:
+        return set()
+    return {email.strip().lower() for email in raw.split(",") if email.strip()}
