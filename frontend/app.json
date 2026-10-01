@@ -18,6 +18,11 @@
         "CFBundleURLTypes": [
           {
             "CFBundleURLSchemes": [
+              "chameleo"
+            ]
+          },
+          {
+            "CFBundleURLSchemes": [
               "com.googleusercontent.apps.131708705239-35r4k29vfeo87obi7cjsftdk9alsfs5f"
             ]
           }
@@ -53,7 +58,16 @@
       "expo-web-browser",
       "expo-mail-composer",
       "expo-font",
-      "expo-image"
+      "expo-image",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Chameleo to access your photos so you can attach an image to a lost or found item.",
+          "cameraPermission": "Allow Chameleo to use your camera so you can take a photo of a lost or found item.",
+          "microphonePermission": false
+        }
+      ],
+      "./plugins/withGoogleSignInModularHeaders"
     ],
     "experiments": {
       "typedRoutes": true,

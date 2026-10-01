@@ -1,0 +1,29 @@
+{
+  "name": "${localWorkspaceFolderBasename}",
+  "image": "ubuntu:24.04",
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "username": "ubuntu",
+      "installZsh": false,
+      "upgradePackages": false
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.12",
+      "installTools": false
+    },
+    "ghcr.io/devcontainers/features/node:1": { "version": "22" }
+  },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,bind-propagation=rslave",
+  "mounts": [
+    "source=${localWorkspaceFolderBasename}-venv,target=/workspace/.venv,type=volume",
+    "source=${localWorkspaceFolderBasename}-node-modules,target=/workspace/frontend/node_modules,type=volume"
+  ],
+  "remoteUser": "ubuntu",
+  "runArgs": ["--name", "${localWorkspaceFolderBasename}"],
+  "appPort": ["0.0.0.0:8001:8001", "0.0.0.0:8081:8081"],
+  "remoteEnv": {
+    "PATH": "/workspace/.venv/bin:${containerEnv:PATH}"
+  },
+  "postCreateCommand": ".devcontainer/post-create.sh"
+}

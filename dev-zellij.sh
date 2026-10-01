@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
-source "$HOME/.virtualenvs/chameleo/bin/activate"
-source "$HOME/android-studio.sh"
+set -e
+
+cd "$(dirname "$0")"
+
+[ -r .devcontainer/env.sh ] && . .devcontainer/env.sh
+
 zellij --layout zellij-layout.kdl

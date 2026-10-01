@@ -49,3 +49,8 @@ backend/.env
 # database
 backend/database.db
 backend/uploads/
+
+# dev container
+.devcontainer/.lan-host
+.devcontainer/.expo-token
+.venv/
