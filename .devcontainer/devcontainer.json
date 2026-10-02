@@ -17,13 +17,23 @@
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,bind-propagation=rslave",
   "mounts": [
     "source=${localWorkspaceFolderBasename}-venv,target=/workspace/.venv,type=volume",
-    "source=${localWorkspaceFolderBasename}-node-modules,target=/workspace/frontend/node_modules,type=volume"
+    "source=${localWorkspaceFolderBasename}-node-modules,target=/workspace/frontend/node_modules,type=volume",
+    "source=${localWorkspaceFolderBasename}-android-sdk,target=/opt/android-sdk,type=volume",
+    "source=${localWorkspaceFolderBasename}-home,target=/home/ubuntu,type=volume"
   ],
   "remoteUser": "ubuntu",
-  "runArgs": ["--name", "${localWorkspaceFolderBasename}"],
+  "runArgs": [
+    "--name",
+    "${localWorkspaceFolderBasename}",
+    "--add-host=host.docker.internal:host-gateway"
+  ],
   "appPort": ["0.0.0.0:8001:8001", "0.0.0.0:8081:8081"],
   "remoteEnv": {
-    "PATH": "/workspace/.venv/bin:${containerEnv:PATH}"
+    "JAVA_HOME": "/usr/lib/jvm/java-17",
+    "ANDROID_HOME": "/opt/android-sdk",
+    "ANDROID_SDK_ROOT": "/opt/android-sdk",
+    "ADB_SERVER_SOCKET": "tcp:host.docker.internal:5037",
+    "PATH": "/workspace/.venv/bin:/opt/android-sdk/platform-tools:/opt/android-sdk/cmdline-tools/latest/bin:${containerEnv:PATH}"
   },
   "postCreateCommand": ".devcontainer/post-create.sh"
 }

@@ -37,7 +37,8 @@ else
 fi
 
 if [ "$volumes" = 1 ]; then
-    if docker volume rm "${CONTAINER}-venv" "${CONTAINER}-node-modules" >/dev/null 2>&1; then
+    if docker volume rm "${CONTAINER}-venv" "${CONTAINER}-node-modules" \
+        "${CONTAINER}-android-sdk" >/dev/null 2>&1; then
         echo "[stop-dev] removed dependency volumes"
     else
         echo "[stop-dev] no dependency volumes to remove"

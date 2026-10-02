@@ -20,6 +20,16 @@ record_lan_host() {
     fi
 }
 
+share_host_adb() {
+    command -v adb >/dev/null 2>&1 || return 0
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -qE '(0\.0\.0\.0|\*|\[::\]):5037[[:space:]]' && return 0
+        ss -ltn 2>/dev/null | grep -qE '[:.]5037[[:space:]]' && adb kill-server >/dev/null 2>&1
+    fi
+    adb -a start-server >/dev/null 2>&1 ||
+        echo "[enter-dev] could not start a shared adb server; run \`adb -a start-server\`." >&2
+}
+
 network_of() {
     local mode
     mode="$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER" 2>/dev/null)"
@@ -47,6 +57,7 @@ unbound_ports() {
 }
 
 record_lan_host
+share_host_adb
 
 if [ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null)" = "true" ]; then
     if ! attached; then
